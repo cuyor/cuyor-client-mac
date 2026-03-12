@@ -6,12 +6,65 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
-struct cuyorApp: App {
+struct CuyorApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+        // The floating panel is managed by WindowController;
+        // suppress the default SwiftUI window entirely.
+        Settings { EmptyView() }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var windowController: WindowController?
+    private let viewModel = CuyorViewModel()
+    private var statusItem: NSStatusItem?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Must be set before anything else so the app never becomes "active"
+        // and global event monitors fire immediately.
+        NSApp.setActivationPolicy(.accessory)
+        // Resign immediately in case Xcode/launch briefly made us active.
+        NSApp.deactivate()
+        windowController = WindowController(viewModel: viewModel)
+        HotKeyManager.shared.register()
+        setupMenuBar()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        HotKeyManager.shared.unregister()
+    }
+
+    // MARK: - Menu Bar
+
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem?.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Cuyor")
+
+        let menu = NSMenu()
+
+        let toggleItem = NSMenuItem(title: "Show / Hide", action: #selector(toggleBubble), keyEquivalent: "")
+        toggleItem.target = self
+        menu.addItem(toggleItem)
+
+        menu.addItem(.separator())
+
+        let prefsItem = NSMenuItem(title: "Preferences…", action: nil, keyEquivalent: ",")
+        prefsItem.isEnabled = false
+        menu.addItem(prefsItem)
+
+        menu.addItem(.separator())
+
+        menu.addItem(NSMenuItem(title: "Quit Cuyor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        statusItem?.menu = menu
+    }
+
+    @objc private func toggleBubble() {
+        viewModel.toggle()
     }
 }
