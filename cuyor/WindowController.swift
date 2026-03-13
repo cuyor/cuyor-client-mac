@@ -8,7 +8,7 @@
 import AppKit
 import SwiftUI
 
-// Borderless panel that can become key — required for TextField focus without .titled.
+// Borderless panel that accepts key events — needed for TextField without .titled.
 private final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool  { true  }
     override var canBecomeMain: Bool { false }
@@ -19,175 +19,160 @@ final class WindowController {
 
     private var panel: NSPanel!
     private var positionTimer: Timer?
-    private var hotKeyObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var clickOutsideMonitor: Any?
-
-    private let viewModel: CuyorViewModel
+    private let vm: CuyorViewModel
 
     init(viewModel: CuyorViewModel) {
-        self.viewModel = viewModel
-        setupPanel()
-        startPositionTimer()
-        setupHotKeyObserver()
-        viewModel.onExpansionChanged = { [weak self] expanded in
-            self?.applyExpansion(expanded)
-        }
+        vm = viewModel
+        buildPanel()
+        startMouseTracking()
+        listenForHotKeys()
+        vm.onExpansionChanged = { [weak self] in self?.applyExpansion($0) }
+        vm.onCaptureRequested = { [weak self] in self?.triggerCapture() }
     }
 
     // MARK: - Panel
 
-    private func setupPanel() {
-        panel = FloatingPanel(
-            contentRect: NSRect(origin: .zero, size: Layout.windowCollapsed),
-            styleMask:   [.borderless, .nonactivatingPanel],
-            backing:     .buffered,
-            defer:       false
+    private func buildPanel() {
+        let p = FloatingPanel(
+            contentRect: NSRect(origin: .zero, size: CL.collapsed),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false
         )
-        panel.level              = .floating
-        panel.backgroundColor    = .clear
-        panel.isOpaque           = false
-        panel.hasShadow          = false
-        panel.ignoresMouseEvents = false
-        panel.becomesKeyOnlyIfNeeded = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.level              = .floating
+        p.backgroundColor    = .clear
+        p.isOpaque           = false
+        p.hasShadow          = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.animationBehavior  = .none
+        p.isMovableByWindowBackground = false
 
-        // Critical for glass effect: allows panel to composite against
-        // content from other windows beneath it
-        panel.animationBehavior        = .none
-        panel.isMovableByWindowBackground = false
-
-        if let contentView = panel.contentView {
-            contentView.wantsLayer = true
-            contentView.layer?.backgroundColor = .clear
-            // Allow subpixel rendering against underlying window content
-            contentView.layerContentsRedrawPolicy = .onSetNeedsDisplay
-        }
-
-        let root = CuyorPromptView().environmentObject(viewModel)
-        let hosting = NSHostingView(rootView: root)
+        let hosting = NSHostingView(
+            rootView: CuyorPromptView().environmentObject(vm)
+        )
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = .clear
-        panel.contentView = hosting
+        p.contentView = hosting
 
-        let mouse = NSEvent.mouseLocation
-        panel.setFrameOrigin(NSPoint(
-            x: mouse.x + Layout.windowOffsetX,
-            y: mouse.y + Layout.windowOffsetY
-        ))
-        panel.orderFrontRegardless()
+        p
+            .setFrameOrigin(
+                panelOrigin(cursor: NSEvent.mouseLocation, size: CL.collapsed)
+            )
+        p.orderFrontRegardless()
+        panel = p
     }
 
-    // MARK: - Mouse Tracking
+    // MARK: - Mouse tracking
 
-    private func startPositionTimer() {
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.updatePanelPosition()
+    private func startMouseTracking() {
+        let t = Timer(timeInterval: 1 / 60.0, repeats: true) { [weak self] _ in
+            guard let self, !self.vm.isExpanded else { return }
+            let target = self.panelOrigin(
+                cursor: NSEvent.mouseLocation,
+                size: CL.collapsed
+            )
+            let cur    = self.panel.frame.origin
+            let s: CGFloat = 0.18
+            self.panel.setFrameOrigin(NSPoint(
+                x: cur.x + (target.x - cur.x) * s,
+                y: cur.y + (target.y - cur.y) * s
+            ))
         }
         RunLoop.main.add(t, forMode: .common)
         positionTimer = t
     }
 
-    private func updatePanelPosition() {
-        guard !viewModel.isExpanded else { return }
-        let mouse = NSEvent.mouseLocation
-        
-        let offsetX = Layout.windowOffsetX
-        let offsetY = Layout.windowOffsetY
-        
-        let target = NSPoint(
-            x: mouse.x + offsetX,
-            y: mouse.y + offsetY
-        )
+    // MARK: - Hotkeys
 
-        let current = panel.frame.origin
-        let factor: CGFloat = 0.18
-        let smoothed = NSPoint(
-            x: current.x + (target.x - current.x) * factor,
-            y: current.y + (target.y - current.y) * factor
-        )
-        panel.setFrameOrigin(smoothed)
+    private func listenForHotKeys() {
+        let nc = NotificationCenter.default
+        observers
+            .append(
+                nc
+                    .addObserver(forName: .cuyorActivated, object: nil, queue: .main) { [weak self] _ in self?.vm.toggle()
+                    })
+        observers
+            .append(
+                nc
+                    .addObserver(forName: .cuyorCaptureActivated, object: nil, queue: .main) { [weak self] _ in self?.triggerCapture()
+                    })
     }
 
-    // MARK: - Hot Key
+    // MARK: - Screen capture
 
-    private func setupHotKeyObserver() {
-        hotKeyObserver = NotificationCenter.default.addObserver(
-            forName: .cuyorActivated,
-            object:  nil,
-            queue:   .main
-        ) { [weak self] _ in
-            self?.viewModel.toggle()
+    private func triggerCapture() {
+        ScreenCaptureManager.shared.startCapture(
+            on: panel.screen ?? NSScreen.main,
+            excludingWindowNumber: panel.windowNumber
+        ) { [weak self] img in
+            guard let self else { return }
+            self.vm.capturedImage = img
+            if !self.vm.isExpanded { self.vm.toggle() }
         }
     }
 
     // MARK: - Expansion
 
     private func applyExpansion(_ expanded: Bool) {
-        let collapsed = Layout.windowCollapsed
-        let expanded_ = Layout.windowExpanded
-        let targetSize = expanded ? expanded_ : collapsed
+        let size = expanded ? CL.expanded : CL.collapsed
+        // Pin the top edge so the icon doesn't jump when the panel grows downward.
+        let origin = NSPoint(
+            x: panel.frame.minX,
+            y: panel.frame.maxY - size.height
+        )
+        panel
+            .setFrame(
+                clamp(NSRect(origin: origin, size: size)),
+                display: true,
+                animate: false
+            )
 
         if expanded {
-            let frozenOrigin = NSPoint(
-                x: panel.frame.minX,
-                y: panel.frame.minY + (collapsed.height - expanded_.height) / 2
-            )
-            panel.setFrame(
-                safeFrame(NSRect(origin: frozenOrigin, size: targetSize)),
-                display: true, animate: false
-            )
-            // Activate app first, then make key — required for nonactivatingPanel
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
-            startClickOutsideMonitor()
+            clickOutsideMonitor = NSEvent
+                .addGlobalMonitorForEvents(
+                    matching: [.leftMouseDown, .rightMouseDown]
+                ) {
+                    [weak self] _ in
+                    guard let self, !self.panel.frame
+                        .contains(NSEvent.mouseLocation) else { return }
+                    DispatchQueue.main.async { self.vm.collapse() }
+                }
         } else {
-            let collapseOrigin = NSPoint(
-                x: panel.frame.minX,
-                y: panel.frame.midY - collapsed.height / 2
-            )
-            panel.setFrame(
-                safeFrame(NSRect(origin: collapseOrigin, size: targetSize)),
-                display: true, animate: false
-            )
-            stopClickOutsideMonitor()
+            if let m = clickOutsideMonitor {
+                NSEvent.removeMonitor(m); clickOutsideMonitor = nil
+            }
             panel.resignKey()
             panel.orderFrontRegardless()
         }
     }
 
-    // MARK: - Click-outside-to-dismiss
+    // MARK: - Helpers
 
-    private func startClickOutsideMonitor() {
-        clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            guard let self else { return }
-            if !self.panel.frame.contains(NSEvent.mouseLocation) {
-                DispatchQueue.main.async { self.viewModel.collapse() }
-            }
-        }
+    /// Origin so that the *icon's top-left corner* sits dx right and dy below
+    /// the cursor tip. Accounts for the CL.pad inset between panel edge and icon.
+    private func panelOrigin(cursor: NSPoint, size: CGSize) -> NSPoint {
+        NSPoint(
+            x: cursor.x + CL.dx - CL.pad,
+            y: cursor.y - CL.dy + CL.pad - size.height
+        )
     }
 
-    private func stopClickOutsideMonitor() {
-        if let m = clickOutsideMonitor { NSEvent.removeMonitor(m); clickOutsideMonitor = nil }
-    }
-
-    // MARK: - Screen clamping
-
-    private func safeFrame(_ frame: NSRect) -> NSRect {
-        guard let screen = NSScreen.main?.visibleFrame else { return frame }
-        let margin: CGFloat = 16
+    /// Keeps the panel inside the main screen's visible area.
+    private func clamp(_ frame: NSRect) -> NSRect {
+        guard let vis = NSScreen.main?.visibleFrame else { return frame }
+        let m: CGFloat = 16
         var f = frame
-        f.origin.x = max(screen.minX + margin, min(f.origin.x, screen.maxX - f.width  - margin))
-        f.origin.y = max(screen.minY + margin, min(f.origin.y, screen.maxY - f.height - margin))
+        f.origin.x = max(vis.minX + m, min(f.origin.x, vis.maxX - f.width  - m))
+        f.origin.y = max(vis.minY + m, min(f.origin.y, vis.maxY - f.height - m))
         return f
     }
 
-    // MARK: - Cleanup
-
     deinit {
         positionTimer?.invalidate()
-        if let o = hotKeyObserver      { NotificationCenter.default.removeObserver(o) }
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
         if let m = clickOutsideMonitor { NSEvent.removeMonitor(m) }
     }
 }

@@ -9,67 +9,97 @@ import SwiftUI
 import Combine
 
 // MARK: - Layout
+// These are the ONLY values that drive the whole UI. Change them here; nothing
+// else needs updating.
+enum CL {
+    static let iconSize:  CGFloat = 32
+    static let pad:       CGFloat = 16   // inset between panel edge and content
+    static let gap:       CGFloat = 8    // icon → input capsule gap
+    static let inputH:    CGFloat = 44   // input row height
+    static let responseH: CGFloat = 150  // response panel height
 
-enum Layout {
-    // MARK: Primitives — the only values you ever need to change
-    static let iconSize: CGFloat     = 32   // icon circle diameter
-    static let spacing: CGFloat      = 8    // gap between icon and capsule
-    static let capsuleWidth: CGFloat = 260  // expanded input pill width
+    // ── Root size knob ────────────────────────────────────────────────────────
+    static let w: CGFloat = 300          // ← change this to resize the panel
+    // expanded height is fully derived; nothing else to touch.
 
-    /// The SwiftUI content frame used by the prompt view (matches its .frame modifier).
-    static let contentWidth: CGFloat  = 280
-    static let contentHeight: CGFloat = 60
+    static let windowBufferWidthGap: CGFloat = 24
+    static let windowBufferHeightGap: CGFloat = 48
 
-    /// Glow bleed — prevents glassEffect shadow from being clipped by the window edge.
-    static let glowH: CGFloat = 24   // horizontal (left + right)
-    static let glowV: CGFloat = 32   // vertical   (top  + bottom)
-
-    /// Where the icon sits relative to the cursor tip — adjust to taste.
-    static let cursorOffsetX: CGFloat = 28   // icon left edge, rightward from cursor
-    static let cursorOffsetY: CGFloat = 10   // icon center, below cursor
-
-    // MARK: Derived — auto-calculated from the primitives above
-
-    /// Width of the input capsule — fills the remaining space after the icon.
-    static let capsuleContentWidth: CGFloat = contentWidth - iconSize - spacing
-
-    /// NSWindow sizes — include glow bleed on every side.
-    /// Height is the same for both states so the window never resizes vertically,
-    /// preventing the icon from jumping when the panel expands.
-    static let windowCollapsed = CGSize(
-        width:  iconSize      + glowH * 2,   // just the icon + horizontal glow
-        height: contentHeight + glowV * 2    // full content height always
-    )
-    static let windowExpanded = CGSize(
-        width:  contentWidth  + glowH * 2,   // full content + horizontal glow
-        height: contentHeight + glowV * 2    // same height as collapsed
+    // NSPanel frame sizes — source of truth for WindowController.
+    static let collapsed = CGSize(width: 80, height: 80)
+    static let expanded  = CGSize(
+        width:  w + windowBufferWidthGap,
+        height: (inputH + responseH + gap + pad * 2) + windowBufferHeightGap
     )
 
-    /// NSWindow origin offset from the mouse cursor.
-    /// windowOffsetY accounts for contentHeight so the icon (top-aligned in the view)
-    /// stays at cursorOffsetY below the cursor tip.
-    static let windowOffsetX: CGFloat =  cursorOffsetX - glowH
-    static let windowOffsetY: CGFloat = -(cursorOffsetY + contentHeight + glowV - iconSize / 2)
+    // Visual offset from cursor tip to the icon's top-left corner.
+    // dx > 0 → icon is to the right of the cursor
+    // dy > 0 → icon is below the cursor
+    static let dx: CGFloat = 24
+    static let dy: CGFloat = -15
 }
+
+// MARK: - ViewModel
 
 final class CuyorViewModel: ObservableObject {
 
-    @Published var isExpanded: Bool = false
-    @Published var inputText: String = ""
+    @Published var isExpanded:    Bool     = false
+    @Published var instructionMode:    Bool     = false
+    @Published var inputText:     String   = ""
+    @Published var capturedImage: NSImage? = nil
+    @Published var responseText:  String   = ""
+    @Published var isLoading:     Bool     = false
+    @Published var isStreaming:   Bool     = false
 
-    /// WindowController observes this to sync NSPanel size/state.
+    /// True whenever the response panel should be visible.
+    var hasSecondaryContent: Bool {
+        capturedImage != nil || isLoading || !responseText.isEmpty
+    }
+
+    // Callbacks set by WindowController.
     var onExpansionChanged: ((Bool) -> Void)?
+    var onCaptureRequested: (() -> Void)?
 
     func toggle() {
         isExpanded.toggle()
-        if !isExpanded { inputText = "" }
+        if !isExpanded { reset() }
         onExpansionChanged?(isExpanded)
     }
 
     func collapse() {
         guard isExpanded else { return }
         isExpanded = false
-        inputText = ""
+        reset()
         onExpansionChanged?(false)
+    }
+
+    func startCapture() { onCaptureRequested?() }
+    func clearCapture()  { capturedImage = nil    }
+
+    func sendQuery() {
+        let q = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty || capturedImage != nil, !isStreaming else { return }
+        responseText = ""
+        isLoading    = true
+        let img = capturedImage
+        Task { @MainActor in
+            isStreaming = true
+            do {
+                for try await token in CuyorAPIClient.shared
+                    .chat(query: q, image: img) {
+                    responseText += token
+                    isLoading = false
+                }
+            } catch {
+                responseText = "Couldn't reach backend at localhost:8000."
+                isLoading = false
+            }
+            isStreaming = false
+        }
+    }
+
+    private func reset() {
+        inputText = ""; capturedImage = nil
+        responseText = ""; isLoading = false; isStreaming = false
     }
 }

@@ -42,24 +42,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu Bar
 
     private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Cuyor")
+        statusItem = NSStatusBar.system
+            .statusItem(withLength: NSStatusItem.squareLength)
+        
+        if let button = statusItem?.button {
+            // 1. Create a configuration (e.g., 18pt weight bold)
+            let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+            
+            // 2. Apply it to your custom icon
+            button.image = NSImage(named: "cuyor.menu.icon")?.withSymbolConfiguration(config)
+        }
 
         let menu = NSMenu()
 
-        let toggleItem = NSMenuItem(title: "Show / Hide", action: #selector(toggleBubble), keyEquivalent: "")
+        let toggleItem = NSMenuItem(
+            title: "Show / Hide",
+            action: #selector(toggleBubble),
+            keyEquivalent: ""
+        )
         toggleItem.target = self
         menu.addItem(toggleItem)
 
         menu.addItem(.separator())
 
-        let prefsItem = NSMenuItem(title: "Preferences…", action: nil, keyEquivalent: ",")
+        let prefsItem = NSMenuItem(
+            title: "Preferences…",
+            action: nil,
+            keyEquivalent: ","
+        )
         prefsItem.isEnabled = false
         menu.addItem(prefsItem)
 
         menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem(title: "Quit Cuyor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu
+            .addItem(
+                NSMenuItem(
+                    title: "Quit Cuyor",
+                    action: #selector(NSApplication.terminate(_:)),
+                    keyEquivalent: "q"
+                )
+            )
 
         statusItem?.menu = menu
     }
