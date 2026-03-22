@@ -3,6 +3,20 @@ name: Update Appcast for Sparkle
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+      download_url:
+        description: 'Download URL for app artifact (.zip or .dmg)'
+        required: true
+        type: string
+      file_size:
+        description: 'File size in bytes (optional, auto-detected if blank)'
+        required: false
+        type: string
 
 jobs:
   update-appcast:
@@ -16,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,27 +40,42 @@ jobs:
       - name: Extract release information
         id: release_info
         run: |
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          # Use manual input if workflow_dispatch, otherwise use release event
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+            DOWNLOAD_URL="${{ github.event.inputs.download_url }}"
+            FILE_SIZE="${{ github.event.inputs.file_size }}"
+            RELEASE_NOTES_URL=""
+          else
+            RELEASE_TAG="${{ github.event.release.tag_name }}"
+            DOWNLOAD_URL=""
+            FILE_SIZE=""
+            RELEASE_NOTES_URL="${{ github.event.release.html_url }}"
+          fi
+
           VERSION="${RELEASE_TAG#v}"  # Remove 'v' prefix if present
           SHORT_VERSION="$VERSION"
           
-          # Get the first .zip or .dmg asset URL and size
-          DOWNLOAD_URL=""
-          FILE_SIZE=0
-          
-          for asset in $(echo '${{ toJson(github.event.release.assets) }}' | jq -r '.[] | @base64'); do
-            asset_json=$(echo "$asset" | base64 -d)
-            asset_name=$(echo "$asset_json" | jq -r '.name')
-            
-            if [[ "$asset_name" == *.zip || "$asset_name" == *.dmg ]]; then
-              DOWNLOAD_URL=$(echo "$asset_json" | jq -r '.browser_download_url')
-              FILE_SIZE=$(echo "$asset_json" | jq -r '.size')
-              break
-            fi
-          done
+          # If running from release event, extract asset info
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            for asset in $(echo '${{ toJson(github.event.release.assets) }}' | jq -r '.[] | @base64'); do
+              asset_json=$(echo "$asset" | base64 -d)
+              asset_name=$(echo "$asset_json" | jq -r '.name')
+              
+              if [[ "$asset_name" == *.zip || "$asset_name" == *.dmg ]]; then
+                DOWNLOAD_URL=$(echo "$asset_json" | jq -r '.browser_download_url')
+                FILE_SIZE=$(echo "$asset_json" | jq -r '.size')
+                break
+              fi
+            done
+          fi
+
+          if [[ -z "$FILE_SIZE" ]] || [[ "$FILE_SIZE" == "" ]]; then
+            FILE_SIZE=0
+          fi
           
           if [ -z "$DOWNLOAD_URL" ]; then
-            echo "No .zip or .dmg asset found in release"
+            echo "No download URL provided or asset found in release"
             exit 1
           fi
           
@@ -54,7 +84,7 @@ jobs:
           echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
           echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
           echo "file_size=$FILE_SIZE" >> $GITHUB_OUTPUT
-          echo "release_notes_url=${{ github.event.release.html_url }}" >> $GITHUB_OUTPUT
+          echo "release_notes_url=$RELEASE_NOTES_URL" >> $GITHUB_OUTPUT
       
       - name: Run generate_appcast.py
         run: |
@@ -70,16 +100,19 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          
+
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+
           if [[ -n $(git status -s appcast.xml) ]]; then
             git add appcast.xml
             git commit -m "chore: update appcast for release ${{ steps.release_info.outputs.release_tag }}"
-            git push
+            git push origin "HEAD:${DEFAULT_BRANCH}"
           else
             echo "No changes to appcast.xml"
           fi
       
       - name: Upload appcast.xml to release assets
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
           files: appcast.xml
