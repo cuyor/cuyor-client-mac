@@ -2,7 +2,7 @@
 //  ScreenCaptureManager.swift
 //  cuyor
 //
-//  Created by Umar Ahmed on 12/03/2026.
+//  Created by Cuyor.
 //
 
 import AppKit
@@ -11,8 +11,6 @@ import ScreenCaptureKit
 
 // MARK: - ScreenCaptureManager
 
-/// Creates a fullscreen drag-selection overlay and captures the chosen region
-/// using ScreenCaptureKit.  The Cuyor panel itself is excluded from the capture.
 @MainActor
 final class ScreenCaptureManager {
 
@@ -25,13 +23,10 @@ final class ScreenCaptureManager {
 
     // MARK: - Public
 
-    /// Shows the fullscreen selection overlay on `screen`.
-    /// `excludingWindowNumber` should be the Cuyor panel's `windowNumber` so it
-    /// doesn't appear in the captured image.
     func startCapture(
         on screen: NSScreen?,
         excludingWindowNumber windowNumber: Int,
-        completion: @escaping @MainActor (NSImage) -> Void
+        completion: @escaping @MainActor (NSImage, CGRect) -> Void
     ) {
         guard overlayWindow == nil else { return }
 
@@ -103,7 +98,7 @@ final class ScreenCaptureManager {
         _ rect: CGRect,
         screen: NSScreen,
         excludingWindowNumber windowNumber: Int,
-        completion: @escaping @MainActor (NSImage) -> Void
+        completion: @escaping @MainActor (NSImage, CGRect) -> Void
     ) async {
         do {
             let content   = try await SCShareableContent.current
@@ -113,8 +108,6 @@ final class ScreenCaptureManager {
                 return
             }
 
-            // Exclude the Cuyor app from the capture so the floating panel doesn't
-            // appear in the screenshot.
             let excludedApps = content.applications.filter {
                 $0.bundleIdentifier == Bundle.main.bundleIdentifier
             }
@@ -125,8 +118,7 @@ final class ScreenCaptureManager {
             )
 
             let config              = SCStreamConfiguration()
-            // sourceRect is in display-logical coordinates (top-left origin, y down),
-            // which matches the SwiftUI local coordinate space of the overlay view.
+            
             config.sourceRect       = rect
             config.width            = Int(
                 rect.width  * screen.backingScaleFactor
@@ -144,10 +136,17 @@ final class ScreenCaptureManager {
                 cgImage: cgImage,
                 size: NSSize(width: rect.width, height: rect.height)
             )
-            completion(nsImage)
+
+            // CONVERSION: Map the local SwiftUI Top-Left rect
+            let globalAppKitRect = NSRect(
+                x: screen.frame.minX + rect.minX,
+                y: screen.frame.maxY - rect.maxY,
+                width: rect.width,
+                height: rect.height
+            )
+
+            completion(nsImage, globalAppKitRect)
         } catch {
-            // Permission denied or other SCKit error — surface nothing; the user
-            // will notice the thumbnail didn't appear and can try again.
             print("[ScreenCaptureManager] capture error: \(error)")
         }
     }

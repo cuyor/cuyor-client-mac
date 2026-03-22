@@ -2,7 +2,7 @@
 //  CuyorPromptView.swift
 //  cuyor
 //
-//  Created by Umar Ahmed on 11/03/2026.
+//  Created by Cuyor.
 //
 
 import SwiftUI
@@ -10,22 +10,32 @@ import SwiftUI
 struct CuyorPromptView: View {
     @EnvironmentObject private var vm: CuyorViewModel
     @FocusState private var focused: Bool
-
-    // Capsule width fits between the icon and the right padding edge.
+    
     private let capsuleW: CGFloat = CL.w - CL.pad * 2 - CL.iconSize - CL.gap
     private let r: CGFloat = 18
 
+    private var iconRotation: Double {
+        if vm.instructionMode, let target = vm.currentTargetPoint {
+            let origin = vm.panelOrigin
+            let dx = target.x - origin.x
+            let dy = target.y - origin.y
+            return (atan2(dy, dx) * 180 / .pi) - 90
+        }
+        return vm.isExpanded ? 0 : 90
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-
-            // Right-side content now lays out vertically, so response follows
-            // the real input height as the text field grows.
             VStack(alignment: .leading, spacing: CL.gap) {
                 inputRow
 
                 if vm.hasSecondaryContent {
                     responseSection
                         .transition(.opacity)
+                }
+                
+                if vm.instructionMode && (vm.instructionPlan != nil) {
+                    stepsSection
                 }
             }
             .offset(x: CL.iconSize + CL.gap)
@@ -35,7 +45,6 @@ struct CuyorPromptView: View {
             // Icon — always visible
             iconButton
         }
-        // Fill the full padded area so offset children aren't clipped.
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
@@ -50,6 +59,7 @@ struct CuyorPromptView: View {
         .animation(.default, value: vm.hasSecondaryContent)
         .onChange(of: vm.isExpanded) { _, expanded in
             if expanded {
+                vm.refreshDetectedApps()
                 DispatchQueue.main
                     .asyncAfter(deadline: .now() + 0.1) { focused = true }
             } else {
@@ -62,21 +72,19 @@ struct CuyorPromptView: View {
 
     private var iconButton: some View {
         Button { vm.toggle() } label: {
-            Image(
-                systemName: vm.instructionMode ? "arrow.up.circle.dotted" : "sparkle"
-            )
-            .font(.system(size: 20))
-            .symbolRenderingMode(.hierarchical)
-            .frame(width: CL.iconSize, height: CL.iconSize, alignment: .center)
-            .contentTransition(.symbolEffect(.replace))
-            .rotationEffect(.degrees(vm.isExpanded ? 0 : 90.0))
-            .animation(
-                .bouncy(
-                    duration: 0.3,
-                    extraBounce: 0.2
-                ),
-                value: vm.isExpanded
-            )
+            Image("cuyor.prompt.icon")
+                .font(.system(size: 20))
+                .symbolRenderingMode(.hierarchical)
+                .symbolEffect(.pulse, isActive: vm.isLoading || vm.isStreaming)
+                .symbolEffect(.bounce, value: vm.isLoading || vm.isStreaming)
+                .symbolEffect(.rotate, value: vm.isLoading || vm.isStreaming)
+                .frame(width: CL.iconSize, height: CL.iconSize)
+                .animation(
+                    (vm.isLoading || vm.isStreaming)
+                    ? .linear(duration: 2.0).repeatForever(autoreverses: false)
+                    : .default,
+                    value: vm.isLoading || vm.isStreaming
+                )
         }
         .buttonStyle(.plain)
         .glassEffect(in: Circle())
@@ -93,14 +101,21 @@ struct CuyorPromptView: View {
                 .focused($focused)
                 .disabled(vm.isStreaming)
                 .onKeyPress(.escape) {
-                    DispatchQueue.main.async { vm.collapse() }
+                    DispatchQueue.main.async {
+                        vm.collapse()
+                        vm.endInstructionMode()
+                    }
                     return .handled
                 }
                 .onKeyPress(phases: .down) { press in
                     guard press.key == .return,
                           !press.modifiers
                         .contains(.shift) else { return .ignored }
-                    DispatchQueue.main.async { vm.sendQuery() }
+                    DispatchQueue.main
+                        .async {                
+                            vm.beginInstructionMode()
+                            vm.sendInstructionPlan()
+                        }
                     return .handled
                 }
 
@@ -116,7 +131,50 @@ struct CuyorPromptView: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .padding(.top, 1)
 
-            Button { vm.collapse() } label: {
+            Menu {
+                if vm.detectedApps.isEmpty {
+                    Text("No apps detected")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(vm.detectedApps) { app in
+                        Button {
+                            vm.selectedApp = app
+                        } label: {
+                            HStack {
+                                Text(app.name)
+                                if vm.selectedApp?.id == app.id {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button {
+                    vm.refreshDetectedApps()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            } label: {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 13))
+                    .foregroundStyle(vm.selectedApp != nil
+                                     ? AnyShapeStyle(.tint)
+                                     : AnyShapeStyle(.secondary))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(vm.isStreaming)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.top, 1)
+
+            Button { 
+                vm.collapse()
+                vm.endInstructionMode()
+                vm.capturedImage = nil
+            } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
@@ -131,6 +189,142 @@ struct CuyorPromptView: View {
         .glassEffect(in: RoundedRectangle(cornerRadius: r, style: .continuous))
     }
 
+    // MARK: - Response section
+
+    private var stepsSection: some View {
+        VStack(alignment: .center, spacing: 8) {
+            
+            VStack(alignment: .leading, spacing: 12) {
+                if let plan = vm.instructionPlan,
+                   let step = vm.currentInstructionStep {
+                    
+                    HStack(alignment: .top) {
+                        Text(plan.goal)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        Text("\(step.stepNumber)/\(plan.totalSteps)")
+                            .font(.system(size: 11, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+
+                    Text(step.instructionText)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(4)
+
+                    HStack(spacing: 6) {
+                        Label(step.targetElement, systemImage: "scope")
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.15))
+                            .foregroundStyle(.blue)
+                            .clipShape(Capsule())
+                            .lineLimit(1)
+                    }
+
+                    if let value = step.inputValue, !value.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 10))
+                            Text("Type:")
+                                .font(.system(size: 11, weight: .medium))
+                            Text(value)
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            Color.green.opacity(0.15)
+                        )
+                        .foregroundStyle(.green)
+                        .cornerRadius(8)
+                    }
+
+                } else if vm.isLoading {
+                    Text("Building guidance plan...")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else if let err = vm.instructionError {
+                    Text(err)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.red)
+                } else {
+                    Text("No guidance steps available yet.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .frame(
+                maxWidth: capsuleW,
+                alignment: .topLeading
+            )
+            .glassEffect(
+                in: RoundedRectangle(cornerRadius: r, style: .continuous)
+            )
+
+            // --- Navigation Buttons ---
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    vm.previousInstructionStep()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text("Prev") // Shortened for smaller widths
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(in: UnevenRoundedRectangle(
+                    topLeadingRadius: r,
+                    bottomLeadingRadius: r,
+                    bottomTrailingRadius: r/3,
+                    topTrailingRadius: r/3,
+                    style: .continuous
+                ))
+                .disabled(vm.currentInstructionIndex == 0)
+                
+                Button {
+                    vm.nextInstructionStep()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Next")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(in: UnevenRoundedRectangle(
+                    topLeadingRadius: r/3,
+                    bottomLeadingRadius: r/3,
+                    bottomTrailingRadius: r,
+                    topTrailingRadius: r,
+                    style: .continuous
+                ))
+                .disabled(
+                    vm.currentInstructionIndex >= (
+                        vm.instructionPlan?.steps.count ?? 0
+                    ) - 1
+                )
+            }
+            .frame(maxWidth: capsuleW)
+        }
+    }
+    
     // MARK: - Response section
 
     private var responseSection: some View {
@@ -159,39 +353,10 @@ struct CuyorPromptView: View {
                     .buttonStyle(.plain)
                 }
             }
-
-            // Response body
-            if vm.isLoading && vm.responseText.isEmpty {
-                HStack(spacing: 6) {
-                    Text("Thinking...")
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
-                        .foregroundStyle(.gray.opacity(0.3))
-                        .overlay {
-                            LinearGradient(
-                                colors: [.clear, .white.opacity(0.8), .clear],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            .offset(x: vm.isLoading ? 200 : -200)
-                            .mask(
-                                Text("Shimmering Text").font(.largeTitle.bold())
-                            )
-                        }
-                }
-            } else if !vm.responseText.isEmpty {
-                ScrollView {
-                    Text(vm.responseText)
-                        .font(.system(size: 13))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .animation(.default, value: vm.responseText)
-            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: capsuleW, height: CL.responseH, alignment: .topLeading)
+        .frame(width: capsuleW, alignment: .topLeading)
         .glassEffect(in: RoundedRectangle(cornerRadius: r, style: .continuous))
     }
 }

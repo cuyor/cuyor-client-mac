@@ -1,0 +1,88 @@
+name: Update Appcast for Sparkle
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-appcast:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Extract release information
+        id: release_info
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          VERSION="${RELEASE_TAG#v}"  # Remove 'v' prefix if present
+          SHORT_VERSION="$VERSION"
+          
+          # Get the first .zip or .dmg asset URL and size
+          DOWNLOAD_URL=""
+          FILE_SIZE=0
+          
+          for asset in $(echo '${{ toJson(github.event.release.assets) }}' | jq -r '.[] | @base64'); do
+            asset_json=$(echo "$asset" | base64 -d)
+            asset_name=$(echo "$asset_json" | jq -r '.name')
+            
+            if [[ "$asset_name" == *.zip || "$asset_name" == *.dmg ]]; then
+              DOWNLOAD_URL=$(echo "$asset_json" | jq -r '.browser_download_url')
+              FILE_SIZE=$(echo "$asset_json" | jq -r '.size')
+              break
+            fi
+          done
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "No .zip or .dmg asset found in release"
+            exit 1
+          fi
+          
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "short_version=$SHORT_VERSION" >> $GITHUB_OUTPUT
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+          echo "file_size=$FILE_SIZE" >> $GITHUB_OUTPUT
+          echo "release_notes_url=${{ github.event.release.html_url }}" >> $GITHUB_OUTPUT
+      
+      - name: Run generate_appcast.py
+        run: |
+          python scripts/generate_appcast.py \
+            "${{ steps.release_info.outputs.release_tag }}" \
+            "${{ steps.release_info.outputs.version }}" \
+            "${{ steps.release_info.outputs.short_version }}" \
+            "${{ steps.release_info.outputs.download_url }}" \
+            "${{ steps.release_info.outputs.file_size }}" \
+            "${{ steps.release_info.outputs.release_notes_url }}"
+      
+      - name: Commit and push appcast.xml
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          if [[ -n $(git status -s appcast.xml) ]]; then
+            git add appcast.xml
+            git commit -m "chore: update appcast for release ${{ steps.release_info.outputs.release_tag }}"
+            git push
+          else
+            echo "No changes to appcast.xml"
+          fi
+      
+      - name: Upload appcast.xml to release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: appcast.xml
+          tag_name: ${{ github.event.release.tag_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

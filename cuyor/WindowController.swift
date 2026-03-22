@@ -2,13 +2,12 @@
 //  WindowController.swift
 //  cuyor
 //
-//  Created by Umar Ahmed on 11/03/2026.
+//  Created by Cuyor.
 //
 
 import AppKit
 import SwiftUI
 
-// Borderless panel that accepts key events — needed for TextField without .titled.
 private final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool  { true  }
     override var canBecomeMain: Bool { false }
@@ -30,6 +29,11 @@ final class WindowController {
         listenForHotKeys()
         vm.onExpansionChanged = { [weak self] in self?.applyExpansion($0) }
         vm.onCaptureRequested = { [weak self] in self?.triggerCapture() }
+        vm.requestPanelOrigin = { [weak self] in
+            guard let self else { return .zero }
+            let frame = self.panel.frame
+            return CGPoint(x: frame.midX, y: frame.midY)
+        }
     }
 
     // MARK: - Panel
@@ -105,9 +109,10 @@ final class WindowController {
         ScreenCaptureManager.shared.startCapture(
             on: panel.screen ?? NSScreen.main,
             excludingWindowNumber: panel.windowNumber
-        ) { [weak self] img in
+        ) { [weak self] capturedImage, snippetRect in
             guard let self else { return }
-            self.vm.capturedImage = img
+            self.vm.capturedImage = capturedImage
+            self.vm.savedSnippetRect = snippetRect
             if !self.vm.isExpanded { self.vm.toggle() }
         }
     }
@@ -162,11 +167,19 @@ final class WindowController {
 
     /// Keeps the panel inside the main screen's visible area.
     private func clamp(_ frame: NSRect) -> NSRect {
-        guard let vis = NSScreen.main?.visibleFrame else { return frame }
+        let targetScreen = NSScreen.screens.first { $0.frame.intersects(frame) } 
+        ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+        ?? NSScreen.screens.first
+        
+        guard let vis = targetScreen?.visibleFrame else { return frame }
+        
         let m: CGFloat = 16
         var f = frame
+        
         f.origin.x = max(vis.minX + m, min(f.origin.x, vis.maxX - f.width  - m))
+        
         f.origin.y = max(vis.minY + m, min(f.origin.y, vis.maxY - f.height - m))
+        
         return f
     }
 

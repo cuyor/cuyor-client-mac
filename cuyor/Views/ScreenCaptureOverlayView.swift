@@ -2,23 +2,23 @@
 //  ScreenCaptureOverlayView.swift
 //  cuyor
 //
-//  Created by Umar Ahmed on 12/03/2026.
+//  Created by Cuyor.
 //
 
 import SwiftUI
 
-// MARK: - Even-odd mask that punches a transparent hole for the selection
+// MARK: - Even-odd mask
 
 private struct SelectionMaskShape: Shape {
     let selection: CGRect
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        path.addRect(rect)          // fill entire bounds …
+        path.addRect(rect)        
         path
             .addRect(
                 selection
-            )     // … then cut the selection out (even-odd rule)
+            )    
         return path
     }
 }
@@ -26,11 +26,7 @@ private struct SelectionMaskShape: Shape {
 // MARK: - Overlay view
 
 struct ScreenCaptureOverlayView: View {
-    /// Called with the selected rect in the view's local coordinate space when the
-    /// drag finishes with a valid selection (width > 10, height > 10).
     let onCapture: (CGRect) -> Void
-    /// Called when the user cancels (too-small drag, or ESC via the window-level
-    /// keyDown monitor installed by ScreenCaptureManager).
     let onCancel: () -> Void
 
     @State private var startPoint:  CGPoint = .zero
@@ -50,14 +46,12 @@ struct ScreenCaptureOverlayView: View {
         GeometryReader { geo in
             ZStack {
                 if isDragging && selectionRect.width > 2 && selectionRect.height > 2 {
-                    // Dimmed area with a transparent hole cut through it
                     SelectionMaskShape(selection: selectionRect)
                         .fill(
                             Color.black.opacity(0.45),
                             style: FillStyle(eoFill: true)
                         )
 
-                    // Border around the selection
                     Rectangle()
                         .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
                         .frame(
@@ -66,7 +60,6 @@ struct ScreenCaptureOverlayView: View {
                         )
                         .position(x: selectionRect.midX, y: selectionRect.midY)
 
-                    // Size label above the selection
                     Text(
                         "\(Int(selectionRect.width)) × \(Int(selectionRect.height))"
                     )
@@ -81,7 +74,6 @@ struct ScreenCaptureOverlayView: View {
                         y: max(selectionRect.minY - 18, 14)
                     )
                 } else {
-                    // Idle state: full-screen dim + instructions
                     Color.black.opacity(0.45)
 
                     VStack(spacing: 8) {

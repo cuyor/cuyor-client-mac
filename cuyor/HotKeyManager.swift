@@ -2,21 +2,20 @@
 //  HotKeyManager.swift
 //  cuyor
 //
-//  Created by Umar Ahmed on 11/03/2026.
+//  Created by Cuyor.
 //
 
 import Carbon.HIToolbox
 
 extension Notification.Name {
     static let cuyorActivated        = Notification.Name(
-        "com.syndrect.cuyor.activated"
+        "com.cuyor.activated"
     )
     static let cuyorCaptureActivated = Notification.Name(
-        "com.syndrect.cuyor.capture"
+        "com.cuyor.capture"
     )
 }
 
-// MARK: - C-compatible event callback (cannot capture Swift closures)
 
 private func hotKeyEventCallback(
     nextHandler: EventHandlerCallRef?,
@@ -60,25 +59,20 @@ final class HotKeyManager {
 
     /// Registers ⌃⌥Space (activate) and ⌃⌥S (capture) as global hotkeys.
     func register() {
-        // Carbon modifier flags: controlKey = 0x1000, optionKey = 0x0800
         let modifiers: UInt32 = 0x1000 | 0x0800
 
-        // ⌃⌥Space — toggle Cuyor bar (id = 1)
         var id = EventHotKeyID()
-        id.signature = 0x43594F52   // 'CYOR'
+        id.signature = 0x43594F52
         id.id        = 1
-        RegisterEventHotKey(49, modifiers, id,   // 49 = kVK_Space
+        RegisterEventHotKey(49, modifiers, id,
                             GetApplicationEventTarget(), 0, &hotKeyRef)
 
-        // ⌃⌥S — trigger screen capture (id = 2)
         var captureID = EventHotKeyID()
         captureID.signature = 0x43594F52
         captureID.id        = 2
-        RegisterEventHotKey(1, modifiers, captureID,  // 1 = kVK_ANSI_S
+        RegisterEventHotKey(1, modifiers, captureID,
                             GetApplicationEventTarget(), 0, &captureHotKeyRef)
 
-        // One handler covers both hotkeys because both are kEventHotKeyPressed
-        // on the same event target; the callback distinguishes by hotKeyID.id.
         var spec = EventTypeSpec(
             eventClass: UInt32(kEventClassKeyboard),
             eventKind:  UInt32(kEventHotKeyPressed)

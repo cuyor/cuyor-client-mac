@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>Cuyor</title>
+        <link>https://github.com/cuyor/cuyor-client-mac</link>
+        <description>Auto-update feed for Cuyor</description>
+        <language>en</language>
+        <!-- Release items will be generated and inserted here by CI/CD -->
+        <!-- Example structure (uncomment to see template):
+        <item>
+            <title>Cuyor 1.1.0</title>
+            <description>
+                <![CDATA[
+                    <h2>Version 1.1.0</h2>
+                    <ul>
+                        <li>Feature 1</li>
+                        <li>Feature 2</li>
+                        <li>Bug fix 3</li>
+                    </ul>
+                ]]>
+            </description>
+            <pubDate>Thu, 22 Mar 2026 00:00:00 +0000</pubDate>
+            <sparkle:version>1.1.0</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:releaseNotesLink>https://github.com/cuyor/cuyor-client-mac/releases/tag/v1.1.0</sparkle:releaseNotesLink>
+            <enclosure 
+                url="https://github.com/cuyor/cuyor-client-mac/releases/download/v1.1.0/Cuyor.zip" 
+                sparkle:version="1.1.0" 
+                sparkle:shortVersionString="1.1.0" 
+                length="45000000" 
+                type="application/zip"
+                sparkle:edSignature="SIGNATURE_HERE"
+            />
+        </item>
+        -->
+    </channel>
+</rss>
