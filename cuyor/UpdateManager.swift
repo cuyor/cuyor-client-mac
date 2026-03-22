@@ -7,20 +7,21 @@
 import Foundation
 import Sparkle
 
-final class UpdateManager: NSObject {
+final class UpdateManager: NSObject, SPUUpdaterDelegate {
     static let shared = UpdateManager()
 
-    private let updaterController: SPUStandardUpdaterController
+    private let appcastURLString = "https://raw.githubusercontent.com/cuyor/cuyor-client-mac/main/appcast.xml"
+    private var updaterController: SPUStandardUpdaterController!
 
     override private init() {
-        // Use Sparkle's standard controller for a menu-bar app integration.
+        super.init()
+
+        // Provide delegate-based feed URL so updates still work if generated Info.plist keys are stale.
         self.updaterController = SPUStandardUpdaterController(
             startingUpdater: false,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: nil
         )
-
-        super.init()
     }
 
     /// Start automatic update checking
@@ -43,5 +44,11 @@ final class UpdateManager: NSObject {
     /// Called periodically or at app startup
     func checkForUpdatesInBackground() {
         updaterController.updater.checkForUpdatesInBackground()
+    }
+
+    // MARK: - SPUUpdaterDelegate
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        appcastURLString
     }
 }
